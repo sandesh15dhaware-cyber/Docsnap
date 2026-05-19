@@ -4,139 +4,45 @@ const PDFLIB_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-li
 const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.mjs";
 const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.mjs";
 
-const C = {
-  bg: "#0B0D11", surface: "#151820", surface2: "#1E2230", border: "#282D3E",
-  accent: "#2563EB", accentLight: "#3B82F6", text: "#F0F1F5", muted: "#6B7194",
-  danger: "#DC2626", white: "#fff",
-};
+const C = { bg:"#0B0D11",surface:"#151820",surface2:"#1E2230",border:"#282D3E",accent:"#2563EB",accentLight:"#3B82F6",text:"#F0F1F5",muted:"#6B7194",danger:"#DC2626",white:"#fff" };
 
-// â”€â”€ IndexedDB â”€â”€
-const DB_NAME = "docsnap_db";
-const STORE = "pages";
-function openDB() {
-  return new Promise((res, rej) => {
-    const r = indexedDB.open(DB_NAME, 1);
-    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE, { keyPath: "id" }); };
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
-  });
+const DB_NAME="docsnap_db",STORE="pages";
+function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:"id"})};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function dbSave(pages){const db=await openDB();const tx=db.transaction(STORE,"readwrite");const s=tx.objectStore(STORE);s.clear();pages.forEach(p=>s.put(p));return new Promise((r,e)=>{tx.oncomplete=r;tx.onerror=()=>e(tx.error)})}
+async function dbLoad(){const db=await openDB();const tx=db.transaction(STORE,"readonly");const req=tx.objectStore(STORE).getAll();return new Promise((r,e)=>{req.onsuccess=()=>r(req.result||[]);req.onerror=()=>e(req.error)})}
+async function dbClear(){const db=await openDB();const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).clear();return new Promise(r=>{tx.oncomplete=r})}
+import { useState, useEffect, useRef, useCallback } from "react";
+
+const PDFLIB_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js";
+const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.mjs";
+const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.mjs";
+
+const C = { bg:"#0B0D11",surface:"#151820",surface2:"#1E2230",border:"#282D3E",accent:"#2563EB",accentLight:"#3B82F6",text:"#F0F1F5",muted:"#6B7194",danger:"#DC2626",white:"#fff" };
+
+const DB_NAME="docsnap_db",STORE="pages";
+function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:"id"})};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function dbSave(pages){const db=await openDB();const tx=db.transaction(STORE,"readwrite");const s=tx.objectStore(STORE);s.clear();pages.forEach(p=>s.put(p));return new Promise((r,e)=>{tx.oncomplete=r;tx.onerror=()=>e(tx.error)})}
+async function dbLoad(){const db=await openDB();const tx=db.transaction(STORE,"readonly");const req=tx.objectStore(STORE).getAll();return new Promise((r,e)=>{req.onsuccess=()=>r(req.result||[]);req.onerror=()=>e(req.error)})}
+async function dbClear(){const db=await openDB();const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).clear();return new Promise(r=>{tx.oncomplete=r})}
+const openEdit=(idx)=>{setActiveIdx(idx);const pg=pages[idx];setFilter(pg.filter);setBrightness(pg.brightness);setContrast(pg.contrast);setMode("edit")};
+const saveEdit=()=>{if(activeIdx===null)return;setPages(p=>p.map((pg,i)=>i===activeIdx?{...pg,filter,brightness,contrast}:pg));setMode("gallery");setActiveIdx(null)};
+const rotatePage=(idx)=>{setPages(p=>p.map((pg,i)=>i===idx?{...pg,rotation:(pg.rotation+90)%360}:pg))};
+const deletePage=(idx)=>{setPages(p=>p.filter((_,i)=>i!==idx));if(mode==="edit"){setMode("gallery");setActiveIdx(null)}};
+const clearAll=async()=>{setPages([]);await dbClear();setShowClear(false)};
+const getFilter=(pg)=>{let f="brightness("+pg.brightness+"%) contrast("+pg.contrast+"%)";if(pg.filter==="grayscale")f+=" grayscale(1)";if(pg.filter==="highcontrast")f+=" grayscale(1) contrast(200%) brightness(120%)";if(pg.filter==="sharpen")f+=" contrast(130%) brightness(105%)";return f};
+
+const exportPDF=async()=>{if(!pdfLib||pages.length===0)return;setProcessing(true);setMsg("Creating PDF...");try{const{PDFDocument}=pdfLib;const doc=await PDFDocument.create();for(let i=0;i<pages.length;i++){const pg=pages[i];setMsg("Page "+(i+1)+"/"+pages.length);const img=new Image();await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=pg.src});const c=document.createElement("canvas");const rot=pg.rotation===90||pg.rotation===270;c.width=rot?img.height:img.width;c.height=rot?img.width:img.height;const ctx=c.getContext("2d");ctx.filter=getFilter(pg);ctx.translate(c.width/2,c.height/2);ctx.rotate(pg.rotation*Math.PI/180);ctx.drawImage(img,-img.width/2,-img.height/2);const jpgData=await fetch(c.toDataURL("image/jpeg",0.88)).then(r=>r.arrayBuffer());const emb=await doc.embedJpg(new Uint8Array(jpgData));const pw=595.28,ph=841.89,page=doc.addPage([pw,ph]),s=Math.min(pw/emb.width,ph/emb.height);page.drawImage(emb,{x:(pw-emb.width*s)/2,y:(ph-emb.height*s)/2,width:emb.width*s,height:emb.height*s})}const bytes=await doc.save();const blob=new Blob([bytes],{type:"application/pdf"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="docsnap_"+new Date().toISOString().slice(0,10)+".pdf";a.click();URL.revokeObjectURL(url)}catch(e){console.error(e);alert("Export failed.")}setProcessing(false);setMsg("")};
+
+const activePage=activeIdx!==null?pages[activeIdx]:null;
+const font="'Inter',system-ui,sans-serif";
+if(!loaded)return(<div style={{height:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:font}}><div style={{textAlign:"center"}}><div style={{width:48,height:48,background:C.accent,borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:20,fontWeight:800,color:C.white}}>DS</div><div style={{width:28,height:28,border:"3px solid "+C.border,borderTopColor:C.accent,borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"16px auto"}}/><p style={{color:C.muted,fontSize:13}}>Loading...</p></div></div>);
+
+const overlay=processing&&(<div style={{position:"fixed",inset:0,background:"#000c",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:font}}><div style={{textAlign:"center",padding:32}}><div style={{width:36,height:36,border:"3px solid "+C.border,borderTopColor:C.accent,borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:C.text,fontSize:14,fontWeight:500}}>{msg||"Processing..."}</p></div></div>);
+
+if(mode==="camera")return(<div style={{height:"100vh",background:"#000",fontFamily:font,position:"relative"}}>{overlay}<video ref={videoRef} autoPlay playsInline muted style={{position:"absolute",inset:0,objectFit:"cover",width:"100%",height:"100%"}}/><div style={{position:"absolute",top:0,left:0,right:0,padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><button className="ds-btn" onClick={stopCamera} style={{background:"#111a",backdropFilter:"blur(12px)",color:C.white,padding:"10px 18px",borderRadius:12,fontSize:14,fontWeight:500}}>✕ Close</button><div style={{background:"#111a",backdropFilter:"blur(12px)",color:C.white,padding:"8px 16px",borderRadius:12,fontSize:13,fontWeight:600}}>{pages.length} pages</div></div><div style={{position:"absolute",bottom:0,left:0,right:0,padding:"20px 0 40px",display:"flex",justifyContent:"center",background:"linear-gradient(transparent,#000a)"}}><button className="ds-btn" onClick={capturePhoto} style={{width:76,height:76,borderRadius:"50%",background:C.white,border:"4px solid "+C.accent,boxShadow:"0 4px 20px #0006"}}/></div></div>);
+
+if(mode==="edit"&&activePage)return(<div style={{height:"100vh",background:C.bg,display:"flex",flexDirection:"column",fontFamily:font}}>{overlay}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:"1px solid "+C.border}}><button className="ds-btn" onClick={()=>{setMode("gallery");setActiveIdx(null)}} style={{background:"none",color:C.muted,fontSize:15,padding:"6px 0"}}>← Back</button><span style={{fontSize:13,color:C.muted,fontWeight:500}}>{activeIdx+1}/{pages.length}</span><button className="ds-btn" onClick={saveEdit} style={{background:C.accent,color:C.white,padding:"8px 22px",borderRadius:10,fontSize:13,fontWeight:600}}>Save</button></div><div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:16,background:"#080A0E"}}><img src={activePage.src} style={{maxWidth:"92%",maxHeight:"100%",objectFit:"contain",borderRadius:6,transform:"rotate("+activePage.rotation+"deg)",filter:"brightness("+brightness+"%) contrast("+contrast+"%)"+( filter==="grayscale"?" grayscale(1)":filter==="highcontrast"?" grayscale(1) contrast(200%) brightness(120%)":filter==="sharpen"?" contrast(130%) brightness(105%)":""),transition:"filter 0.2s,transform 0.3s"}}/></div><div style={{padding:"16px 20px 28px",borderTop:"1px solid "+C.border,background:C.surface}}><div style={{display:"flex",gap:8,marginBottom:18,overflowX:"auto"}}>{[{key:"original",label:"Original"},{key:"grayscale",label:"B&W"},{key:"highcontrast",label:"Document"},{key:"sharpen",label:"Sharp"}].map(f=>(<button key={f.key} className="ds-btn" onClick={()=>setFilter(f.key)} style={{padding:"10px 18px",borderRadius:12,fontSize:12,fontWeight:600,whiteSpace:"nowrap",background:filter===f.key?C.accent:C.surface2,color:filter===f.key?C.white:C.muted,border:filter===f.key?"none":"1px solid "+C.border}}>{f.label}</button>))}</div><div style={{display:"flex",gap:20,marginBottom:16}}><div style={{flex:1}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:12,color:C.muted}}>Brightness</span><span style={{fontSize:12,color:C.text,fontWeight:600}}>{brightness}%</span></div><input type="range" min="30" max="200" value={brightness} onChange={e=>setBrightness(+e.target.value)}/></div><div style={{flex:1}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:12,color:C.muted}}>Contrast</span><span style={{fontSize:12,color:C.text,fontWeight:600}}>{contrast}%</span></div><input type="range" min="30" max="200" value={contrast} onChange={e=>setContrast(+e.target.value)}/></div></div><div style={{display:"flex",gap:10}}><button className="ds-btn" onClick={()=>rotatePage(activeIdx)} style={{flex:1,padding:"12px",background:C.surface2,color:C.text,borderRadius:10,fontSize:14,fontWeight:500,border:"1px solid "+C.border}}>↻ Rotate</button><button className="ds-btn" onClick={()=>deletePage(activeIdx)} style={{flex:1,padding:"12px",background:"#1C1015",color:C.danger,borderRadius:10,fontSize:14,fontWeight:500,border:"1px solid #3D1A1A"}}>✕ Delete</button></div></div></div>);
+return(<div style={{minHeight:"100vh",background:C.bg,fontFamily:font,display:"flex",flexDirection:"column"}}>{overlay}<header style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid "+C.border,background:C.bg+"ee",position:"sticky",top:0,zIndex:50}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,"+C.accent+","+C.accentLight+")",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:C.white}}>DS</div><div style={{fontSize:18,fontWeight:700,color:C.text}}>DocSnap</div></div><div style={{display:"flex",gap:8,alignItems:"center"}}>{pages.length>0&&(<><button className="ds-btn" onClick={()=>setShowClear(true)} style={{background:C.surface2,color:C.muted,width:36,height:36,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,border:"1px solid "+C.border}}>🗑</button><button className="ds-btn" onClick={exportPDF} disabled={processing} style={{background:C.accent,color:C.white,padding:"9px 18px",borderRadius:10,fontSize:13,fontWeight:600}}>Export ({pages.length})</button></>)}</div></header><input ref={fileRef} type="file" accept="image/*,application/pdf" multiple style={{display:"none"}} onChange={e=>{handleFileUpload(e.target.files);e.target.value=""}}/>
+{showClear&&(<div style={{position:"fixed",inset:0,background:"#000b",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={()=>setShowClear(false)}><div style={{background:C.surface,borderRadius:20,padding:28,maxWidth:320,width:"100%",border:"1px solid "+C.border}} onClick={e=>e.stopPropagation()}><p style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>Delete all scans?</p><p style={{fontSize:14,color:C.muted,lineHeight:1.6,marginBottom:24}}>This removes all {pages.length} pages permanently.</p><div style={{display:"flex",gap:10}}><button className="ds-btn" onClick={()=>setShowClear(false)} style={{flex:1,padding:"12px",background:C.surface2,color:C.text,borderRadius:12,fontSize:14,border:"1px solid "+C.border}}>Cancel</button><button className="ds-btn" onClick={clearAll} style={{flex:1,padding:"12px",background:C.danger,color:C.white,borderRadius:12,fontSize:14,fontWeight:600}}>Delete All</button></div></div></div>)}
+{pages.length===0?(<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32}}><div style={{width:88,height:88,borderRadius:24,background:C.accent+"22",border:"1px solid "+C.accent+"33",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:24}}><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="1.5"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg></div><p style={{fontSize:22,fontWeight:700,color:C.text,marginBottom:8}}>Snap your documents</p><p style={{fontSize:14,color:C.muted,textAlign:"center",maxWidth:300,lineHeight:1.7,marginBottom:32}}>Scan contracts, deeds, reports. Upload images or PDFs.</p><div style={{display:"flex",gap:12,width:"100%",maxWidth:320}}><button className="ds-btn" onClick={startCamera} style={{flex:1,background:C.accent,color:C.white,padding:"16px",borderRadius:14,fontSize:15,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>📷 Camera</button><button className="ds-btn" onClick={()=>fileRef.current?.click()} style={{flex:1,background:C.surface2,color:C.text,padding:"16px",borderRadius:14,fontSize:15,fontWeight:500,border:"1px solid "+C.border,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>📁 Upload</button></div><p style={{fontSize:11,color:C.muted,marginTop:16}}>Supports JPG, PNG, PDF</p></div>):(<><div style={{flex:1,padding:16,overflowY:"auto"}}><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(105px,1fr))",gap:10}}>{pages.map((pg,idx)=>(<div key={pg.id} className="ds-card" onClick={()=>openEdit(idx)} style={{background:C.surface,borderRadius:12,overflow:"hidden",border:"1px solid "+C.border,animation:"fadeIn 0.25s ease both"}}><div style={{width:"100%",aspectRatio:"3/4",overflow:"hidden",background:C.surface2,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}><img src={pg.src} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"cover",transform:"rotate("+pg.rotation+"deg)",filter:getFilter(pg)}}/>{pg.rotation>0&&<span style={{position:"absolute",top:4,right:4,background:"#000b",color:C.white,fontSize:9,padding:"2px 5px",borderRadius:4}}>{pg.rotation}°</span>}</div><div style={{padding:"6px 8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:12,fontWeight:700,color:C.text}}>{idx+1}</span><span style={{fontSize:9,color:C.muted,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pg.label}</span></div></div>))}<div className="ds-card" onClick={()=>fileRef.current?.click()} style={{borderRadius:12,border:"2px dashed "+C.border,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:140}}><span style={{fontSize:24,color:C.muted}}>+</span><span style={{fontSize:10,color:C.muted,marginTop:4}}>Add</span></div></div></div><div style={{padding:"12px 16px 20px",borderTop:"1px solid "+C.border,display:"flex",gap:10,background:C.surface,position:"sticky",bottom:0}}><button className="ds-btn" onClick={startCamera} style={{flex:1,padding:"14px",background:C.accent,color:C.white,borderRadius:12,fontSize:14,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>📷 Scan</button><button className="ds-btn" onClick={()=>fileRef.current?.click()} style={{flex:1,padding:"14px",background:C.surface2,color:C.text,borderRadius:12,fontSize:14,fontWeight:500,display:"flex",alignItems:"center",justifyContent:"center",gap:8,border:"1px solid "+C.border}}>📁 Upload</button></div></>)}</div>);
 }
-async function dbSave(pages) { const db = await openDB(); const tx = db.transaction(STORE, "readwrite"); const s = tx.objectStore(STORE); s.clear(); pages.forEach(p => s.put(p)); return new Promise((r, e) => { tx.oncomplete = r; tx.onerror = () => e(tx.error); }); }
-async function dbLoad() { const db = await openDB(); const tx = db.transaction(STORE, "readonly"); const req = tx.objectStore(STORE).getAll(); return new Promise((r, e) => { req.onsuccess = () => r(req.result || []); req.onerror = () => e(req.error); }); }
-async function dbClear() { const db = await openDB(); const tx = db.transaction(STORE, "readwrite"); tx.objectStore(STORE).clear(); return new Promise(r => { tx.oncomplete = r; }); }
-
-export default function DocSnap() {
-  const [pdfLib, setPdfLib] = useState(null);
-  const [pdfjs, setPdfjs] = useState(null);
-  const [pages, setPages] = useState([]);
-  const [activeIdx, setActiveIdx] = useState(null);
-  const [mode, setMode] = useState("gallery");
-  const [cameraStream, setCameraStream] = useState(null);
-  const [filter, setFilter] = useState("original");
-  const [brightness, setBrightness] = useState(100);
-  const [contrast, setContrast] = useState(100);
-  const [processing, setProcessing] = useState(false);
-  const [processingMsg, setProcessingMsg] = useState("");
-  const [loaded, setLoaded] = useState(false);
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
-
-  const videoRef = useRef(null);
-  const fileRef = useRef(null);
-  const saveTimer = useRef(null);
-
-  // Load libraries
-  useEffect(() => {
-    const s = document.createElement("script");
-    s.src = PDFLIB_CDN;
-    s.onload = () => setPdfLib(window.PDFLib);
-    document.head.appendChild(s);
-    import(PDFJS_CDN).then(mod => {
-      mod.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
-      setPdfjs(mod);
-    }).catch(() => {});
-  }, []);
-
-  // Load saved pages
-  useEffect(() => {
-    dbLoad().then(saved => { if (saved.length) setPages(saved); setLoaded(true); }).catch(() => setLoaded(true));
-  }, []);
-
-  // Auto-save
-  useEffect(() => {
-    if (!loaded) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { dbSave(pages).catch(() => {}); }, 500);
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [pages, loaded]);
-
-  // Styles
-  useEffect(() => {
-    const s = document.createElement("style");
-    s.textContent = `
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-      html, body { overscroll-behavior: none; }
-      ::-webkit-scrollbar { width: 0; }
-      @keyframes spin { to { transform: rotate(360deg); } }
-      @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-      @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-      .ds-btn { font-family: 'Inter', sans-serif; cursor: pointer; transition: all 0.15s; border: none; outline: none; -webkit-user-select: none; user-select: none; }
-      .ds-btn:active { transform: scale(0.96); opacity: 0.85; }
-      .ds-card { transition: all 0.2s; }
-      .ds-card:active { transform: scale(0.97); }
-      input[type=range] { -webkit-appearance: none; background: ${C.border}; height: 4px; border-radius: 2px; outline: none; width: 100%; }
-      input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; background: ${C.accent}; border-radius: 50%; cursor: pointer; border: 2px solid ${C.white}; box-shadow: 0 2px 8px #0004; }
-    `;
-    document.head.appendChild(s);
-    return () => document.head.removeChild(s);
-  }, []);
-              <div style={{ position: "absolute", bottom: -1, left: -1, width: 28, height: 28, borderBottom: `3px solid ${C.accent}`, borderLeft: `3px solid ${C.accent}`, borderRadius: "0 0 0 16px" }} />
-            <div style={{ position: "absolute", bottom: -1, right: -1, width: 28, height: 28, borderBottom: `3px solid ${C.accent}`, borderRight: `3px solid ${C.accent}`, borderRadius: "0 0 16px 0" }} />
-          </div>
-        </div>
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <button className="ds-btn" onClick={stopCamera} style={{ background: "#111a", backdropFilter: "blur(12px)", color: C.white, padding: "10px 18px", borderRadius: 12, fontSize: 14, fontWeight: 500 }}>âœ• Close</button>
-          <div style={{ background: "#111a", backdropFilter: "blur(12px)", color: C.white, padding: "8px 16px", borderRadius: 12, fontSize: 13, fontWeight: 600 }}>{pages.length} pages</div>
-        </div>
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 0 40px", display: "flex", justifyContent: "center", background: "linear-gradient(transparent, #000a)" }}>
-          <button className="ds-btn" onClick={capturePhoto} style={{ width: 76, height: 76, borderRadius: "50%", background: C.white, border: `4px solid ${C.accent}`, boxShadow: "0 4px 20px #0006" }} />
-        </div>
-      </div>
-    );
-}
-"highcontrast" ? "DOC" : "SHARP"}</span>}
-                  </div>
-                  <div style={{ padding: "6px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{idx + 1}</span>
-                    <span style={{ fontSize: 9, color: C.muted, maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pg.label}</span>
-                  </div>
-                </div>
-              ))}
-
-              {/* Add card */}
-              <div className="ds-card" onClick={() => fileRef.current?.click()} style={{
-                borderRadius: 12, border: `2px dashed ${C.border}`, display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center", minHeight: 140, cursor: "pointer",
-              }}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
-                <span style={{ fontSize: 10, color: C.muted, marginTop: 6 }}>Add</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Bottom bar */}
-          <div style={{ padding: "12px 16px 20px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 10, background: C.surface, position: "sticky", bottom: 0 }}>
-            <button className="ds-btn" onClick={startCamera} style={{ flex: 1, padding: "14px", background: C.accent, color: C.white, borderRadius: 12, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" /><circle cx="12" cy="13" r="4" /></svg>
-              Scan
-            </button>
-            <button className="ds-btn" onClick={() => fileRef.current?.click()} style={{ flex: 1, padding: "14px", background: C.surface2, color: C.text, borderRadius: 12, fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: `1px solid ${C.border}` }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>
-              Upload
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-      }
